@@ -298,7 +298,6 @@ export default function SymmetryApp() {
     const { exponent } = levelsParams;
     // Recalculate range for pixel loop
     const range = whitePoint - blackPoint || 1;
-    const factor = 255 / range;
 
     for (let i = 0; i < data.length; i += 4) {
       // Logic:
