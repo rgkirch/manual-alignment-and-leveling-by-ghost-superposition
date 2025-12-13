@@ -4,17 +4,22 @@ import { Upload, RotateCw, Download, Trash2, Sliders, FlipHorizontal, FlipVertic
 // --- Reusable Histogram Component (Krita Style) ---
 const LevelsHistogram = ({
   imageSrc,
+  channelMode,
+  histogram,
+  setHistogram,
   blackPoint, setBlackPoint,
   whitePoint, setWhitePoint,
   midPoint, setMidPoint
 }: {
   imageSrc: string | null,
+  channelMode: string,
+  histogram: number[],
+  setHistogram: (h: number[]) => void,
   blackPoint: number, setBlackPoint: (v: number) => void,
   whitePoint: number, setWhitePoint: (v: number) => void,
   midPoint: number, setMidPoint: (v: number) => void
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [histogram, setHistogram] = useState<number[]>(new Array(256).fill(0));
   const [isDragging, setIsDragging] = useState<'black' | 'white' | 'mid' | null>(null);
 
   // 1. Calculate Histogram
@@ -32,16 +37,22 @@ const LevelsHistogram = ({
       const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
 
       const hist = new Array(256).fill(0);
-      for (let i = 0; i < data.length; i += 4) {
-        // Luminance (Perceived brightness)
-        const val = Math.round(0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2]);
+       for (let i = 0; i < data.length; i += 4) {
+        let val;
+        if (channelMode === 'Red') {
+            val = data[i];
+        } else if (channelMode === 'Green') {
+            val = data[i+1];
+        } else if (channelMode === 'Blue') {
+            val = data[i+2];
+        } else { // RGB
+            val = Math.round(0.299 * data[i] + 0.587 * data[i+1] + 0.114 * data[i+2]);
+        }
         hist[val]++;
       }
-      // Normalize
-      const max = Math.max(...hist);
-      setHistogram(hist.map(v => v / max));
+      setHistogram(hist);
     };
-  }, [imageSrc]);
+  }, [imageSrc, channelMode]);
 
   // 2. Coordinate Helpers
   const width = 280;
@@ -61,11 +72,15 @@ const LevelsHistogram = ({
 
     ctx.clearRect(0, 0, w, h);
 
+    // Normalize for drawing
+    const max = Math.max(...histogram, 1);
+    const normalizedHist = histogram.map(v => v / max);
+
     // Draw Histogram Bars
     ctx.fillStyle = '#6366f1'; // Indigo
     ctx.globalAlpha = 0.6;
     const barW = w / 256;
-    histogram.forEach((val, i) => {
+    normalizedHist.forEach((val, i) => {
       const barH = val * graphH;
       ctx.fillRect(i * barW, graphH - barH, barW, barH);
     });
@@ -183,7 +198,7 @@ const LevelsHistogram = ({
       <div className="flex justify-between text-[10px] text-neutral-500 mt-2 px-1 font-mono">
         <span>IN: {blackPoint}</span>
         <span className="text-neutral-400">MID: {midPoint}</span>
-        <span>OUT: {whitePoint}</span>
+        <span>WHITE: {whitePoint}</span>
       </div>
     </div>
   );
@@ -198,10 +213,14 @@ export default function SymmetryApp() {
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [rotation, setRotation] = useState(0);
 
-  // Levels State
-  const [blackPoint, setBlackPoint] = useState(0);
-  const [whitePoint, setWhitePoint] = useState(255);
-  const [midPoint, setMidPoint] = useState(128); // Actual input value 0-255
+  const [channelMode, setChannelMode] = useState('RGB');
+  const [levels, setLevels] = useState<{ [key: string]: { blackPoint: number; whitePoint: number; midPoint: number; outputBlackPoint: number; outputWhitePoint: number; } }>({
+    RGB: { blackPoint: 0, whitePoint: 255, midPoint: 128, outputBlackPoint: 0, outputWhitePoint: 255 },
+    Red: { blackPoint: 0, whitePoint: 255, midPoint: 128, outputBlackPoint: 0, outputWhitePoint: 255 },
+    Green: { blackPoint: 0, whitePoint: 255, midPoint: 128, outputBlackPoint: 0, outputWhitePoint: 255 },
+    Blue: { blackPoint: 0, whitePoint: 255, midPoint: 128, outputBlackPoint: 0, outputWhitePoint: 255 },
+  });
+  const [histogram, setHistogram] = useState<number[]>(new Array(256).fill(0));
 
   // Ghost
   const [showGhost, setShowGhost] = useState(true);
@@ -217,27 +236,27 @@ export default function SymmetryApp() {
 
   // --- Core Math for Levels ---
   // We need to calculate the Exponent (Gamma) that maps our custom Midpoint to 0.5
-  const levelsParams = useMemo(() => {
-    // 1. Avoid division by zero
-    const w = whitePoint <= blackPoint ? blackPoint + 1 : whitePoint;
-    const range = w - blackPoint;
-
-    // 2. Slope/Intercept for linear scaling (Black to White)
-    const slope = 1 / (range / 255);
-    const intercept = -(blackPoint / 255) * slope;
-
-    // 3. Calculate Gamma Exponent
-    // Normalized position of midpoint (0.0 to 1.0)
-    let midNorm = (midPoint - blackPoint) / range;
-    // Clamp to prevent math errors
-    midNorm = Math.max(0.01, Math.min(0.99, midNorm));
-
-    // We want midNorm ^ exponent = 0.5
-    // exponent = log(0.5) / log(midNorm)
-    const exponent = Math.log(0.5) / Math.log(midNorm);
-
-    return { slope, intercept, exponent };
-  }, [blackPoint, whitePoint, midPoint]);
+  const { rParams, gParams, bParams } = useMemo(() => {
+    const calculateParams = (channelSettings: typeof levels.RGB) => {
+      const { blackPoint, whitePoint, midPoint, outputBlackPoint, outputWhitePoint } = channelSettings;
+      const w = whitePoint <= blackPoint ? blackPoint + 1 : whitePoint;
+      const inputRange = w - blackPoint;
+      const inputSlope = 255 / inputRange;
+      const inputIntercept = -blackPoint * inputSlope / 255;
+      let midNorm = (midPoint - blackPoint) / inputRange;
+      midNorm = Math.max(0.01, Math.min(0.99, midNorm));
+      const exponent = Math.log(0.5) / Math.log(midNorm);
+      const outputRange = outputWhitePoint - outputBlackPoint;
+      const outputSlope = outputRange / 255;
+      const outputIntercept = outputBlackPoint / 255;
+      return { inputSlope, inputIntercept, exponent, outputSlope, outputIntercept };
+    };
+    return {
+      rParams: calculateParams(levels.Red),
+      gParams: calculateParams(levels.Green),
+      bParams: calculateParams(levels.Blue),
+    };
+  }, [levels]);
 
   // File Handler
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -252,9 +271,12 @@ export default function SymmetryApp() {
           // Reset
           setPosition({ x: 0, y: 0 });
           setRotation(0);
-          setBlackPoint(0);
-          setWhitePoint(255);
-          setMidPoint(128);
+          setLevels({
+            RGB: { blackPoint: 0, whitePoint: 255, midPoint: 128, outputBlackPoint: 0, outputWhitePoint: 255 },
+            Red: { blackPoint: 0, whitePoint: 255, midPoint: 128, outputBlackPoint: 0, outputWhitePoint: 255 },
+            Green: { blackPoint: 0, whitePoint: 255, midPoint: 128, outputBlackPoint: 0, outputWhitePoint: 255 },
+            Blue: { blackPoint: 0, whitePoint: 255, midPoint: 128, outputBlackPoint: 0, outputWhitePoint: 255 },
+          });
         };
         img.src = e.target?.result as string;
       };
@@ -295,28 +317,22 @@ export default function SymmetryApp() {
     const imageData = rawCtx.getImageData(0, 0, rawCanvas.width, rawCanvas.height);
     const data = imageData.data;
 
-    const { exponent } = levelsParams;
-    // Recalculate range for pixel loop
-    const range = whitePoint - blackPoint || 1;
+    const createProcessChannel = (params: typeof rParams) => (val: number) => {
+        const c_in = val / 255.0;
+        const c_after_input = c_in * params.inputSlope + params.inputIntercept;
+        const c_after_gamma = Math.pow(Math.max(0.0, Math.min(1.0, c_after_input)), params.exponent);
+        const c_out = c_after_gamma * params.outputSlope + params.outputIntercept;
+        return Math.floor(Math.max(0.0, Math.min(1.0, c_out)) * 255);
+    };
+
+    const processR = createProcessChannel(rParams);
+    const processG = createProcessChannel(gParams);
+    const processB = createProcessChannel(bParams);
 
     for (let i = 0; i < data.length; i += 4) {
-      // Logic:
-      // 1. Normalize (Value - Black) / Range
-      // 2. Apply Power Curve (Value ^ Exponent)
-      // 3. Scale back to 255
-
-      const processChannel = (val: number) => {
-          let norm = (val - blackPoint) / range;
-          // Clamp 0-1
-          norm = Math.max(0, Math.min(1, norm));
-          // Apply Gamma Curve
-          const curved = Math.pow(norm, exponent);
-          return Math.floor(curved * 255);
-      };
-
-      data[i] = processChannel(data[i]);     // R
-      data[i+1] = processChannel(data[i+1]); // G
-      data[i+2] = processChannel(data[i+2]); // B
+      data[i] = processR(data[i]);     // R
+      data[i+1] = processG(data[i+1]); // G
+      data[i+2] = processB(data[i+2]); // B
     }
     rawCtx.putImageData(imageData, 0, 0);
 
@@ -349,6 +365,63 @@ export default function SymmetryApp() {
     link.click();
   };
 
+  const handleAutoLevels = () => {
+    if (!histogram || histogram.length === 0) return;
+
+    const totalPixels = histogram.reduce((a, b) => a + b, 0);
+    if (totalPixels === 0) return;
+
+    const threshold = 0.001;
+    const thresholdPixels = totalPixels * threshold;
+
+    let black = 0;
+    let white = 255;
+
+    // Find black point
+    let cumulative = 0;
+    for (let i = 0; i < 256; i++) {
+        cumulative += histogram[i];
+        if (cumulative >= thresholdPixels) {
+            black = i;
+            break;
+        }
+    }
+
+    // Find white point
+    cumulative = 0;
+    for (let i = 255; i >= 0; i--) {
+        cumulative += histogram[i];
+        if (cumulative >= thresholdPixels) {
+            white = i;
+            break;
+        }
+    }
+    
+    // Ensure black is less than white
+    if (black >= white) {
+        black = 0;
+        white = 255;
+    }
+
+    setLevels(p => {
+        const newP = { ...p };
+        const applyPoints = (channel: string) => {
+            newP[channel].blackPoint = black;
+            newP[channel].whitePoint = white;
+        }
+        
+        if (channelMode === 'RGB') {
+            applyPoints('RGB');
+            applyPoints('Red');
+            applyPoints('Green');
+            applyPoints('Blue');
+        } else {
+            applyPoints(channelMode);
+        }
+        return newP;
+    });
+  };
+
   return (
     <div className="flex h-screen bg-neutral-900 text-white font-sans overflow-hidden select-none"
          onMouseMove={handleMouseMove}
@@ -359,18 +432,24 @@ export default function SymmetryApp() {
       <svg width="0" height="0" className="absolute pointer-events-none">
         <defs>
           <filter id="levels-complex">
-             {/* Step 1: Linear Stretch (Black/White Points) */}
+             {/* Step 1: Linear Stretch (Input Black/White Points) */}
              <feComponentTransfer>
-                <feFuncR type="linear" slope={levelsParams.slope} intercept={levelsParams.intercept} />
-                <feFuncG type="linear" slope={levelsParams.slope} intercept={levelsParams.intercept} />
-                <feFuncB type="linear" slope={levelsParams.slope} intercept={levelsParams.intercept} />
+                <feFuncR type="linear" slope={rParams.inputSlope} intercept={rParams.inputIntercept} />
+                <feFuncG type="linear" slope={gParams.inputSlope} intercept={gParams.inputIntercept} />
+                <feFuncB type="linear" slope={bParams.inputSlope} intercept={bParams.inputIntercept} />
              </feComponentTransfer>
              {/* Step 2: Gamma Correction (Midtone shift) */}
              <feComponentTransfer>
-                <feFuncR type="gamma" exponent={levelsParams.exponent} />
-                <feFuncG type="gamma" exponent={levelsParams.exponent} />
-                <feFuncB type="gamma" exponent={levelsParams.exponent} />
+                <feFuncR type="gamma" exponent={rParams.exponent} />
+                <feFuncG type="gamma" exponent={gParams.exponent} />
+                <feFuncB type="gamma" exponent={bParams.exponent} />
              </feComponentTransfer>
+             {/* Step 3: Linear Scale (Output Black/White Points) */}
+            <feComponentTransfer>
+                <feFuncR type="linear" slope={rParams.outputSlope} intercept={rParams.outputIntercept} />
+                <feFuncG type="linear" slope={gParams.outputSlope} intercept={gParams.outputIntercept} />
+                <feFuncB type="linear" slope={bParams.outputSlope} intercept={bParams.outputIntercept} />
+            </feComponentTransfer>
           </filter>
         </defs>
       </svg>
@@ -400,15 +479,110 @@ export default function SymmetryApp() {
         {/* --- Krita Style Levels --- */}
         {imageSrc && (
           <div className="space-y-2">
-            <label className="text-xs font-bold uppercase text-neutral-400 tracking-wider flex items-center gap-2">
-              <Activity size={14} /> Levels
-            </label>
+            <div className="flex justify-between items-center">
+              <label className="text-xs font-bold uppercase text-neutral-400 tracking-wider flex items-center gap-2">
+                <Activity size={14} /> Levels
+              </label>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleAutoLevels}
+                  className="bg-neutral-700 hover:bg-neutral-600 text-neutral-300 text-xs rounded px-2 py-1 transition-colors"
+                >
+                  Auto
+                </button>
+                <select
+                    value={channelMode}
+                    onChange={(e) => setChannelMode(e.target.value)}
+                    className="bg-neutral-900 border border-neutral-700 text-neutral-300 text-xs rounded px-2 py-1"
+                >
+                    <option value="RGB">RGB</option>
+                    <option value="Red">Red</option>
+                    <option value="Green">Green</option>
+                    <option value="Blue">Blue</option>
+                </select>
+              </div>
+            </div>
             <LevelsHistogram
               imageSrc={imageSrc}
-              blackPoint={blackPoint} setBlackPoint={setBlackPoint}
-              whitePoint={whitePoint} setWhitePoint={setWhitePoint}
-              midPoint={midPoint} setMidPoint={setMidPoint}
+              channelMode={channelMode}
+              histogram={histogram}
+              setHistogram={setHistogram}
+              blackPoint={levels[channelMode].blackPoint}
+              setBlackPoint={(v) => setLevels(p => {
+                const newP = { ...p };
+                if (channelMode === 'RGB') {
+                  newP.RGB.blackPoint = v; newP.Red.blackPoint = v; newP.Green.blackPoint = v; newP.Blue.blackPoint = v;
+                } else {
+                  newP[channelMode].blackPoint = v;
+                }
+                return newP;
+              })}
+              whitePoint={levels[channelMode].whitePoint}
+              setWhitePoint={(v) => setLevels(p => {
+                const newP = { ...p };
+                if (channelMode === 'RGB') {
+                  newP.RGB.whitePoint = v; newP.Red.whitePoint = v; newP.Green.whitePoint = v; newP.Blue.whitePoint = v;
+                } else {
+                  newP[channelMode].whitePoint = v;
+                }
+                return newP;
+              })}
+              midPoint={levels[channelMode].midPoint}
+              setMidPoint={(v) => setLevels(p => {
+                const newP = { ...p };
+                if (channelMode === 'RGB') {
+                  newP.RGB.midPoint = v; newP.Red.midPoint = v; newP.Green.midPoint = v; newP.Blue.midPoint = v;
+                } else {
+                  newP[channelMode].midPoint = v;
+                }
+                return newP;
+              })}
             />
+            <div className="text-[10px] text-neutral-500 mt-2 px-1 font-mono space-y-2">
+              <div className="flex justify-between">
+                <label>Output Black: {levels[channelMode].outputBlackPoint}</label>
+                <label>Output White: {levels[channelMode].outputWhitePoint}</label>
+              </div>
+              <div className="relative h-4">
+                  <input
+                      type="range" min="0" max="255"
+                      value={levels[channelMode].outputBlackPoint}
+                      onChange={(e) => {
+                        const value = parseInt(e.target.value);
+                        setLevels(p => {
+                          const newP = { ...p };
+                          const newBlack = Math.min(value, newP[channelMode].outputWhitePoint - 1);
+                          if (channelMode === 'RGB') {
+                            newP.RGB.outputBlackPoint = newBlack; newP.Red.outputBlackPoint = newBlack; newP.Green.outputBlackPoint = newBlack; newP.Blue.outputBlackPoint = newBlack;
+                          } else {
+                            newP[channelMode].outputBlackPoint = newBlack;
+                          }
+                          return newP;
+                        })
+                      }}
+                      className="absolute w-full h-1 bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-gray-400 z-10"
+                      style={{ background: 'transparent' }}
+                  />
+                   <input
+                      type="range" min="0" max="255"
+                      value={levels[channelMode].outputWhitePoint}
+                      onChange={(e) => {
+                        const value = parseInt(e.target.value);
+                        setLevels(p => {
+                          const newP = { ...p };
+                          const newWhite = Math.max(value, newP[channelMode].outputBlackPoint + 1);
+                           if (channelMode === 'RGB') {
+                            newP.RGB.outputWhitePoint = newWhite; newP.Red.outputWhitePoint = newWhite; newP.Green.outputWhitePoint = newWhite; newP.Blue.outputWhitePoint = newWhite;
+                          } else {
+                            newP[channelMode].outputWhitePoint = newWhite;
+                          }
+                          return newP;
+                        })
+                      }}
+                      className="absolute w-full h-1 bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-white"
+                  />
+              </div>
+            </div>
             <p className="text-[10px] text-neutral-500 italic leading-snug">
                Tip: Drag Black triangle just past the first peak. Drag Grey triangle left to expand shadow detail.
             </p>
