@@ -403,11 +403,14 @@ export default function SymmetryApp() {
         white = 255;
     }
 
+    const mid = Math.round((black + white) / 2);
+
     setLevels(p => {
         const newP = { ...p };
         const applyPoints = (channel: string) => {
             newP[channel].blackPoint = black;
             newP[channel].whitePoint = white;
+            newP[channel].midPoint = mid;
         }
         
         if (channelMode === 'RGB') {
@@ -543,7 +546,7 @@ export default function SymmetryApp() {
                 <label>Output Black: {levels[channelMode].outputBlackPoint}</label>
                 <label>Output White: {levels[channelMode].outputWhitePoint}</label>
               </div>
-              <div className="relative h-4">
+              <div className="space-y-1">
                   <input
                       type="range" min="0" max="255"
                       value={levels[channelMode].outputBlackPoint}
@@ -560,8 +563,7 @@ export default function SymmetryApp() {
                           return newP;
                         })
                       }}
-                      className="absolute w-full h-1 bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-gray-400 z-10"
-                      style={{ background: 'transparent' }}
+                      className="w-full h-1 bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-gray-400"
                   />
                    <input
                       type="range" min="0" max="255"
@@ -579,7 +581,7 @@ export default function SymmetryApp() {
                           return newP;
                         })
                       }}
-                      className="absolute w-full h-1 bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-white"
+                      className="w-full h-1 bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-white"
                   />
               </div>
             </div>
