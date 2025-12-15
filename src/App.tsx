@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { Upload, RotateCw, Download, Trash2, Sliders, FlipHorizontal, FlipVertical, Eye, EyeOff, Activity, Move } from 'lucide-react';
+import { Upload, RotateCw, Download, Trash2, Sliders, FlipHorizontal, FlipVertical, Eye, EyeOff, Activity, Move, ZoomIn } from 'lucide-react';
 
 // --- Reusable Histogram Component (Krita Style) ---
 const LevelsHistogram = ({
@@ -212,6 +212,7 @@ export default function SymmetryApp() {
   // Transformation
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [rotation, setRotation] = useState(0);
+  const [zoom, setZoom] = useState(1);
 
   const [channelMode, setChannelMode] = useState('RGB');
   const [levels, setLevels] = useState<{ [key: string]: { blackPoint: number; whitePoint: number; midPoint: number; outputBlackPoint: number; outputWhitePoint: number; } }>({
@@ -233,6 +234,7 @@ export default function SymmetryApp() {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
 
   // --- Core Math for Levels ---
   // We need to calculate the Exponent (Gamma) that maps our custom Midpoint to 0.5
@@ -277,6 +279,25 @@ export default function SymmetryApp() {
             Green: { blackPoint: 0, whitePoint: 255, midPoint: 128, outputBlackPoint: 0, outputWhitePoint: 255 },
             Blue: { blackPoint: 0, whitePoint: 255, midPoint: 128, outputBlackPoint: 0, outputWhitePoint: 255 },
           });
+
+          // Calculate initial zoom to fit image in viewport
+          if (viewportRef.current) {
+            const viewportW = viewportRef.current.offsetWidth;
+            const viewportH = viewportRef.current.offsetHeight;
+            const imgW = img.width;
+            const imgH = img.height;
+
+            if (imgW > 0 && imgH > 0) {
+              const scaleX = viewportW / imgW;
+              const scaleY = viewportH / imgH;
+              const initialZoom = Math.min(scaleX, scaleY) * 0.9; // * 0.9 to have some padding
+              setZoom(initialZoom);
+            } else {
+              setZoom(1);
+            }
+          } else {
+            setZoom(1);
+          }
         };
         img.src = e.target?.result as string;
       };
@@ -288,14 +309,14 @@ export default function SymmetryApp() {
   const handleMouseDown = (e: React.MouseEvent) => {
     if (!imageSrc) return;
     setIsDraggingImage(true);
-    setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
+    setDragStart({ x: e.clientX - position.x * zoom, y: e.clientY - position.y * zoom });
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
     if (isDraggingImage) {
       setPosition({
-        x: e.clientX - dragStart.x,
-        y: e.clientY - dragStart.y
+        x: (e.clientX - dragStart.x) / zoom,
+        y: (e.clientY - dragStart.y) / zoom
       });
     }
   };
@@ -616,17 +637,40 @@ export default function SymmetryApp() {
           </div>
 
           <div className="space-y-2">
+            <div className="flex justify-between">
+                <label className="text-xs font-bold uppercase text-neutral-500 tracking-wider flex items-center gap-2">
+                    <ZoomIn size={14} /> Zoom
+                </label>
+                <span className="text-xs font-mono text-indigo-300">{Math.round(zoom * 100)}%</span>
+            </div>
+            <input
+                type="range" min="0.1" max="5" step="0.05"
+                value={zoom}
+                onChange={(e) => setZoom(parseFloat(e.target.value))}
+                className="w-full h-2 bg-neutral-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+            />
+          </div>
+
+          <div className="space-y-2">
             <label className="text-xs font-bold uppercase text-neutral-500 tracking-wider flex items-center gap-2">
                <Move size={14} /> Position (Pixels)
             </label>
             <div className="grid grid-cols-2 gap-2">
                 <div className="flex flex-col gap-1">
                     <span className="text-[10px] text-neutral-500">X Offset</span>
-                    <input type="number" value={position.x} onChange={(e) => setPosition(p => ({...p, x: parseInt(e.target.value) || 0}))} className="bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-xs font-mono" />
+                    <div className="flex">
+                        <button onClick={() => setPosition(p => ({...p, x: p.x - 1}))} className="bg-neutral-700 hover:bg-neutral-600 rounded-l px-2">-</button>
+                        <input type="number" value={position.x} onChange={(e) => setPosition(p => ({...p, x: parseInt(e.target.value) || 0}))} className="bg-neutral-900 border-y border-neutral-700 w-full text-center px-2 py-1 text-xs font-mono" />
+                        <button onClick={() => setPosition(p => ({...p, x: p.x + 1}))} className="bg-neutral-700 hover:bg-neutral-600 rounded-r px-2">+</button>
+                    </div>
                 </div>
                 <div className="flex flex-col gap-1">
                     <span className="text-[10px] text-neutral-500">Y Offset</span>
-                    <input type="number" value={position.y} onChange={(e) => setPosition(p => ({...p, y: parseInt(e.target.value) || 0}))} className="bg-neutral-900 border border-neutral-700 rounded px-2 py-1 text-xs font-mono" />
+                     <div className="flex">
+                        <button onClick={() => setPosition(p => ({...p, y: p.y - 1}))} className="bg-neutral-700 hover:bg-neutral-600 rounded-l px-2">-</button>
+                        <input type="number" value={position.y} onChange={(e) => setPosition(p => ({...p, y: parseInt(e.target.value) || 0}))} className="bg-neutral-900 border-y border-neutral-700 w-full text-center px-2 py-1 text-xs font-mono" />
+                        <button onClick={() => setPosition(p => ({...p, y: p.y + 1}))} className="bg-neutral-700 hover:bg-neutral-600 rounded-r px-2">+</button>
+                    </div>
                 </div>
             </div>
           </div>
@@ -669,6 +713,7 @@ export default function SymmetryApp() {
 
       {/* Viewport */}
       <div
+        ref={viewportRef}
         className="flex-1 relative bg-[#1a1a1a] overflow-hidden cursor-move"
         onMouseDown={handleMouseDown}
         style={{ backgroundImage: 'radial-gradient(#333 1px, transparent 1px)', backgroundSize: '20px 20px' }}
@@ -695,7 +740,7 @@ export default function SymmetryApp() {
                     <div className="absolute w-0 h-0 flex items-center justify-center pointer-events-none mix-blend-difference"
                         style={{ transform: `scaleX(${mirrorH ? -1 : 1}) scaleY(${mirrorV ? -1 : 1})`, zIndex: 20 }}>
                          <img src={imageSrc} alt="Ghost" style={{
-                                transform: `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg)`,
+                                transform: `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${zoom})`,
                                 opacity: ghostOpacity, maxWidth: 'none',
                                 filter: `url(#levels-complex) grayscale(100%) invert(1)`
                             }} draggable={false} />
@@ -703,7 +748,7 @@ export default function SymmetryApp() {
                 )}
                 <div className="absolute w-0 h-0 flex items-center justify-center" style={{ zIndex: 10 }}>
                     <img src={imageSrc} alt="Main" style={{
-                            transform: `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg)`,
+                            transform: `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${zoom})`,
                             maxWidth: 'none', filter: `url(#levels-complex)`
                         }} draggable={false} />
                 </div>
