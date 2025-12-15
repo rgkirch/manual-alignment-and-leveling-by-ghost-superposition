@@ -455,7 +455,7 @@ export default function SymmetryApp() {
       {/* SVG Filters for Live Preview */}
       <svg width="0" height="0" className="absolute pointer-events-none">
         <defs>
-          <filter id="levels-complex">
+          <filter id="levels-complex" color-interpolation-filters="sRGB">
              {/* Step 1: Linear Stretch (Input Black/White Points) */}
              <feComponentTransfer>
                 <feFuncR type="linear" slope={rParams.inputSlope} intercept={rParams.inputIntercept} />
